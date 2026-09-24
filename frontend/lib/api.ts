@@ -1,45 +1,21 @@
-import type {
-  ForecastHistoryResponse,
-  ForecastResponse,
-  ForecastWeightsResponse,
-  LocationsResponse,
-  ModelPerformanceResponse,
-} from "../types/api";
+const API_BASE_URL = "http://127.0.0.1:8000";
 
-import {
-  getMockForecast,
-  getMockWeights,
-  getMockModelPerformance,
-  getMockHistory,
-  MOCK_LOCATIONS,
-} from "./mockData";
+export interface Location {
+  id: string;
+  name: string;
+  latitude?: number;
+  longitude?: number;
+}
 
-/*
- * Frontend data-access layer.
- *
- * Components must ONLY communicate with the backend through these functions.
- *
- * Currently:
- *     NEXT_PUBLIC_USE_MOCK=true → mock data
- *
- * Later:
- *     NEXT_PUBLIC_USE_MOCK=false → FastAPI
- */
+export interface ForecastResponse {
+  [key: string]: any;
+}
 
-const USE_MOCK = process.env.NEXT_PUBLIC_USE_MOCK !== "false";
+export interface ModelPerformance {
+  [key: string]: any;
+}
 
-const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-/* -------------------------------------------------------------------------- */
-/* GET /locations                                                             */
-/* -------------------------------------------------------------------------- */
-
-export async function getLocations(): Promise<LocationsResponse> {
-  if (USE_MOCK) {
-    return MOCK_LOCATIONS;
-  }
-
+export async function getLocations(): Promise<Location[]> {
   const response = await fetch(`${API_BASE_URL}/locations`);
 
   if (!response.ok) {
@@ -49,17 +25,9 @@ export async function getLocations(): Promise<LocationsResponse> {
   return response.json();
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET /forecast/{location_id}                                                */
-/* -------------------------------------------------------------------------- */
-
 export async function getForecast(
   locationId: string
 ): Promise<ForecastResponse> {
-  if (USE_MOCK) {
-    return getMockForecast(locationId);
-  }
-
   const response = await fetch(
     `${API_BASE_URL}/forecast/${locationId}`
   );
@@ -71,17 +39,9 @@ export async function getForecast(
   return response.json();
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET /forecast/{location_id}/weights                                        */
-/* -------------------------------------------------------------------------- */
-
 export async function getForecastWeights(
   locationId: string
-): Promise<ForecastWeightsResponse> {
-  if (USE_MOCK) {
-    return getMockWeights(locationId);
-  }
-
+): Promise<any> {
   const response = await fetch(
     `${API_BASE_URL}/forecast/${locationId}/weights`
   );
@@ -93,16 +53,10 @@ export async function getForecastWeights(
   return response.json();
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET /model-performance                                                      */
-/* -------------------------------------------------------------------------- */
-
-export async function getModelPerformance(): Promise<ModelPerformanceResponse> {
-  if (USE_MOCK) {
-    return getMockModelPerformance();
-  }
-
-  const response = await fetch(`${API_BASE_URL}/model-performance`);
+export async function getModelPerformance(): Promise<ModelPerformance> {
+  const response = await fetch(
+    `${API_BASE_URL}/model-performance`
+  );
 
   if (!response.ok) {
     throw new Error("Failed to fetch model performance");
@@ -111,17 +65,9 @@ export async function getModelPerformance(): Promise<ModelPerformanceResponse> {
   return response.json();
 }
 
-/* -------------------------------------------------------------------------- */
-/* GET /forecast/{location_id}/history                                        */
-/* -------------------------------------------------------------------------- */
-
 export async function getForecastHistory(
   locationId: string
-): Promise<ForecastHistoryResponse> {
-  if (USE_MOCK) {
-    return getMockHistory(locationId);
-  }
-
+): Promise<any> {
   const response = await fetch(
     `${API_BASE_URL}/forecast/${locationId}/history`
   );
