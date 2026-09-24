@@ -46,3 +46,5 @@ Thumbs.db
 dist/
 build/
 *.egg-info/
+# Next.js
+frontend/.next/
