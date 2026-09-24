@@ -1,11 +1,27 @@
 """
-Stage 2: Multi-Model Forecast Blending
+Stage 5: Forecast-Time Adaptive Multi-Model Blending
 
-Combines bias-corrected GFS and ECMWF forecasts
-into a single hybrid forecast.
+Combines bias-corrected GFS and ECMWF forecasts.
 
-For the prototype, model weights are based on
-recent absolute forecast error.
+IMPORTANT:
+Model weights are calculated using ONLY historical forecast
+performance. Current/future observations are never used to
+calculate the current forecast weight.
+
+Workflow:
+
+    Past GFS errors
+            ↓
+    Rolling GFS MAE
+            ↓
+    GFS skill score
+            ↓
+            ┐
+            ├── Dynamic weights
+            ┘
+    ECMWF skill score
+            ↓
+    Hybrid forecast
 
 Hybrid forecast:
 
@@ -52,6 +68,18 @@ OUTPUT_FILE = (
 
 
 # =========================================================
+# Configuration
+# =========================================================
+
+# Assuming hourly data:
+# 24 hours × 7 days = 168 observations
+ROLLING_WINDOW = 168
+
+# Prevent division by zero.
+EPSILON = 1e-6
+
+
+# =========================================================
 # Load corrected forecasts
 # =========================================================
 
@@ -79,7 +107,6 @@ def prepare_data(
 
     print("\nPreparing blending dataset...")
 
-    # Columns identifying the same forecast point.
     keys = [
         "city_name",
         "lat",
@@ -87,7 +114,6 @@ def prepare_data(
         "valid_time",
     ]
 
-    # Select only ECMWF columns required for blending.
     ecmwf_subset = ecmwf[
         keys
         + [
@@ -97,7 +123,6 @@ def prepare_data(
         ]
     ].copy()
 
-    # Merge GFS and ECMWF forecasts.
     result = gfs.merge(
         ecmwf_subset,
         on=keys,
@@ -105,86 +130,178 @@ def prepare_data(
         suffixes=("", "_ecmwf"),
     )
 
+    # Make sure time is actually datetime.
+    result["valid_time"] = pd.to_datetime(
+        result["valid_time"]
+    )
+
+    # Sort chronologically within each location.
+    result = result.sort_values(
+        ["city_name", "valid_time"]
+    ).reset_index(drop=True)
+
     print(f"Matched rows: {len(result):,}")
 
     return result
 
 
 # =========================================================
-# Calculate adaptive model weights
+# Calculate historical errors
+# =========================================================
+
+def calculate_historical_errors(
+    df: pd.DataFrame,
+) -> pd.DataFrame:
+
+    print("\nCalculating historical forecast errors...")
+
+    result = df.copy()
+
+    observed = result[
+        "observed_temperature_2m"
+    ]
+
+    # Error after bias correction.
+    result["gfs_corrected_error"] = (
+        observed
+        - result["gfs_corrected_temperature_2m"]
+    )
+
+    result["ecmwf_corrected_error"] = (
+        observed
+        - result["ecmwf_corrected_temperature_2m"]
+    )
+
+    # Absolute errors.
+    result["gfs_abs_error"] = (
+        result["gfs_corrected_error"].abs()
+    )
+
+    result["ecmwf_abs_error"] = (
+        result["ecmwf_corrected_error"].abs()
+    )
+
+    return result
+
+
+# =========================================================
+# Calculate forecast-time weights
 # =========================================================
 
 def calculate_weights(
     df: pd.DataFrame,
 ) -> pd.DataFrame:
 
-    print("\nCalculating adaptive model weights...")
+    print(
+        "\nCalculating forecast-time adaptive weights..."
+    )
 
     result = df.copy()
 
     # -----------------------------------------------------
-    # Calculate corrected forecast errors
+    # IMPORTANT:
+    #
+    # shift(1) means:
+    #
+    # Current forecast DOES NOT use current observation.
+    #
+    # Example:
+    #
+    # Weight at 12:00
+    #     ↓
+    # Uses errors up to 11:00
+    #
+    # This prevents target leakage.
     # -----------------------------------------------------
 
-    # GFS error:
-    # observed - corrected GFS
-    result["gfs_corrected_error"] = (
-        result["observed_temperature_2m"]
-        - result["gfs_corrected_temperature_2m"]
+    result["gfs_recent_mae"] = (
+        result
+        .groupby("city_name")["gfs_abs_error"]
+        .transform(
+            lambda x:
+            x.shift(1)
+            .rolling(
+                ROLLING_WINDOW,
+                min_periods=24,
+            )
+            .mean()
+        )
     )
 
-    # ECMWF error:
-    # observed - corrected ECMWF
-    result["ecmwf_corrected_error"] = (
-        result["observed_temperature_2m"]
-        - result["ecmwf_corrected_temperature_2m"]
+    result["ecmwf_recent_mae"] = (
+        result
+        .groupby("city_name")["ecmwf_abs_error"]
+        .transform(
+            lambda x:
+            x.shift(1)
+            .rolling(
+                ROLLING_WINDOW,
+                min_periods=24,
+            )
+            .mean()
+        )
     )
 
     # -----------------------------------------------------
-    # Absolute errors
+    # Convert error into skill score.
+    #
+    # Lower MAE = higher skill.
+    #
+    # skill = 1 / MAE
     # -----------------------------------------------------
 
-    gfs_error = result["gfs_corrected_error"].abs()
+    result["gfs_skill"] = (
+        1.0
+        / (
+            result["gfs_recent_mae"]
+            + EPSILON
+        )
+    )
 
-    ecmwf_error = result["ecmwf_corrected_error"].abs()
+    result["ecmwf_skill"] = (
+        1.0
+        / (
+            result["ecmwf_recent_mae"]
+            + EPSILON
+        )
+    )
 
-    # -----------------------------------------------------
-    # Adaptive weights
-    # -----------------------------------------------------
-    #
-    # Lower error = higher weight.
-    #
-    # GFS weight:
-    # ECMWF error / total error
-    #
-    # ECMWF weight:
-    # GFS error / total error
-    #
-    # Therefore:
-    # gfs_weight + ecmwf_weight = 1
-    # -----------------------------------------------------
+    total_skill = (
+        result["gfs_skill"]
+        + result["ecmwf_skill"]
+    )
 
-    total_error = gfs_error + ecmwf_error
-
-    # Avoid division by zero.
-    total_error = total_error.replace(0, np.nan)
-
+    # Normalize so weights sum to 1.
     result["gfs_weight"] = (
-        ecmwf_error / total_error
+        result["gfs_skill"]
+        / total_skill
     )
 
     result["ecmwf_weight"] = (
-        gfs_error / total_error
+        result["ecmwf_skill"]
+        / total_skill
     )
 
-    # If both errors are zero, use equal weighting.
-    result["gfs_weight"] = (
-        result["gfs_weight"].fillna(0.5)
+    # -----------------------------------------------------
+    # Early rows do not have enough historical data.
+    #
+    # Use equal weights until sufficient history exists.
+    # -----------------------------------------------------
+
+    insufficient_history = (
+        result["gfs_recent_mae"].isna()
+        | result["ecmwf_recent_mae"].isna()
     )
 
-    result["ecmwf_weight"] = (
-        result["ecmwf_weight"].fillna(0.5)
-    )
+    result.loc[
+        insufficient_history,
+        "gfs_weight"
+    ] = 0.5
+
+    result.loc[
+        insufficient_history,
+        "ecmwf_weight"
+    ] = 0.5
 
     return result
 
@@ -201,8 +318,6 @@ def generate_hybrid_forecast(
 
     result = df.copy()
 
-    # Weighted combination of corrected GFS
-    # and corrected ECMWF forecasts.
     result["hybrid_temperature_2m"] = (
         result["gfs_corrected_temperature_2m"]
         * result["gfs_weight"]
@@ -215,20 +330,20 @@ def generate_hybrid_forecast(
 
 
 # =========================================================
-# Evaluate hybrid forecast
+# Evaluate forecast
 # =========================================================
 
 def evaluate_forecast(
     df: pd.DataFrame,
 ) -> None:
 
-    print("\n========== FORECAST EVALUATION ==========")
+    print(
+        "\n========== FORECAST-TIME EVALUATION =========="
+    )
 
-    observed = df["observed_temperature_2m"]
-
-    # -----------------------------------------------------
-    # GFS MAE
-    # -----------------------------------------------------
+    observed = df[
+        "observed_temperature_2m"
+    ]
 
     gfs_mae = (
         df["gfs_corrected_temperature_2m"]
@@ -237,20 +352,12 @@ def evaluate_forecast(
         .mean()
     )
 
-    # -----------------------------------------------------
-    # ECMWF MAE
-    # -----------------------------------------------------
-
     ecmwf_mae = (
         df["ecmwf_corrected_temperature_2m"]
         .sub(observed)
         .abs()
         .mean()
     )
-
-    # -----------------------------------------------------
-    # Hybrid MAE
-    # -----------------------------------------------------
 
     hybrid_mae = (
         df["hybrid_temperature_2m"]
@@ -259,9 +366,60 @@ def evaluate_forecast(
         .mean()
     )
 
-    print(f"GFS corrected MAE:    {gfs_mae:.4f}")
-    print(f"ECMWF corrected MAE:  {ecmwf_mae:.4f}")
-    print(f"Hybrid forecast MAE:  {hybrid_mae:.4f}")
+    print(
+        f"GFS corrected MAE:    {gfs_mae:.4f}"
+    )
+
+    print(
+        f"ECMWF corrected MAE:  {ecmwf_mae:.4f}"
+    )
+
+    print(
+        f"Hybrid forecast MAE:  {hybrid_mae:.4f}"
+    )
+
+
+# =========================================================
+# Weight diagnostics
+# =========================================================
+
+def print_weight_statistics(
+    df: pd.DataFrame,
+) -> None:
+
+    print(
+        "\n========== WEIGHT STATISTICS =========="
+    )
+
+    print(
+        f"Average GFS weight:   "
+        f"{df['gfs_weight'].mean():.4f}"
+    )
+
+    print(
+        f"Average ECMWF weight: "
+        f"{df['ecmwf_weight'].mean():.4f}"
+    )
+
+    print(
+        f"Minimum GFS weight:   "
+        f"{df['gfs_weight'].min():.4f}"
+    )
+
+    print(
+        f"Maximum GFS weight:   "
+        f"{df['gfs_weight'].max():.4f}"
+    )
+
+    print(
+        f"Minimum ECMWF weight: "
+        f"{df['ecmwf_weight'].min():.4f}"
+    )
+
+    print(
+        f"Maximum ECMWF weight: "
+        f"{df['ecmwf_weight'].max():.4f}"
+    )
 
 
 # =========================================================
@@ -271,28 +429,59 @@ def evaluate_forecast(
 def main() -> None:
 
     print("==============================================")
-    print(" Hybrid AI-NWP Multi-Model Forecast Blending")
+    print(" Hybrid AI-NWP Forecast Blending")
+    print(" Forecast-Time Adaptive Weighting")
     print("==============================================")
 
-    # Load corrected forecasts.
+    # -----------------------------------------------------
+    # Load
+    # -----------------------------------------------------
+
     gfs, ecmwf = load_data()
 
-    # Match GFS and ECMWF forecasts.
+    # -----------------------------------------------------
+    # Merge
+    # -----------------------------------------------------
+
     df = prepare_data(
         gfs,
         ecmwf,
     )
 
-    # Calculate adaptive model weights.
+    # -----------------------------------------------------
+    # Historical errors
+    # -----------------------------------------------------
+
+    df = calculate_historical_errors(df)
+
+    # -----------------------------------------------------
+    # Forecast-time weights
+    # -----------------------------------------------------
+
     df = calculate_weights(df)
 
-    # Generate final hybrid forecast.
+    # -----------------------------------------------------
+    # Hybrid forecast
+    # -----------------------------------------------------
+
     df = generate_hybrid_forecast(df)
 
-    # Evaluate all forecasts.
+    # -----------------------------------------------------
+    # Evaluate
+    # -----------------------------------------------------
+
     evaluate_forecast(df)
 
-    # Save final hybrid dataset.
+    # -----------------------------------------------------
+    # Diagnostics
+    # -----------------------------------------------------
+
+    print_weight_statistics(df)
+
+    # -----------------------------------------------------
+    # Save
+    # -----------------------------------------------------
+
     print("\nSaving hybrid forecast...")
 
     df.to_parquet(
