@@ -1,10 +1,10 @@
 const API_BASE_URL = "http://127.0.0.1:8000";
-
 export interface Location {
   id: string;
   name: string;
-  latitude?: number;
-  longitude?: number;
+  lat?: number;
+  lon?: number;
+  region?: string;
 }
 
 export interface ForecastResponse {

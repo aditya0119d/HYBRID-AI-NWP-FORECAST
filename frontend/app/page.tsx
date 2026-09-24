@@ -1,700 +1,819 @@
 "use client";
 
 import { useEffect, useState } from "react";
-
-const API_URL = "http://127.0.0.1:8000";
-
-type Location = {
-  id: string;
-  name: string;
-  lat: number;
-  lon: number;
-  region: string;
-};
-
-type WeatherPoint = {
-  valid_time: string;
-  forecast_hour: number;
-  temperature: number | null;
-  precipitation: number | null;
-  humidity: number | null;
-  pressure: number | null;
-  wind_speed: number | null;
-};
-
-type ForecastData = {
-  location: Location;
-  generated_at: string;
-  raw_gfs: WeatherPoint[];
-  raw_ecmwf: WeatherPoint[];
-  corrected_gfs: WeatherPoint[];
-  corrected_ecmwf: WeatherPoint[];
-  final_blend: WeatherPoint[];
-  observed: WeatherPoint[];
-};
+import {
+  getLocations,
+  getForecast,
+  getForecastWeights,
+  getModelPerformance,
+  type Location,
+} from "../lib/api";
 
 export default function Home() {
-  const [location, setLocation] = useState("");
   const [locations, setLocations] = useState<Location[]>([]);
-  const [data, setData] = useState<ForecastData | null>(null);
-  const [loadingLocations, setLoadingLocations] = useState(true);
+  const [selectedLocation, setSelectedLocation] = useState("");
+
+  const [forecast, setForecast] = useState<any>(null);
+  const [weights, setWeights] = useState<any>(null);
+  const [performance, setPerformance] = useState<any>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // --------------------------------------------------
+  // Load available locations when page opens
+  // --------------------------------------------------
 
   useEffect(() => {
     async function loadLocations() {
       try {
-        const response = await fetch(`${API_URL}/locations`);
+        const data = await getLocations();
 
-        if (!response.ok) {
-          throw new Error(`API returned ${response.status}`);
-        }
+        setLocations(data);
 
-        const result: Location[] = await response.json();
-
-        setLocations(result);
-
-        if (result.length > 0) {
-          setLocation(result[0].id);
+        if (data.length > 0) {
+          setSelectedLocation(data[0].id);
         }
       } catch (err) {
         console.error(err);
-        setError("Could not load forecast locations.");
-      } finally {
-        setLoadingLocations(false);
+        setError(
+          "Could not connect to FastAPI. Make sure the backend is running on port 8000."
+        );
       }
     }
 
     loadLocations();
   }, []);
 
-  async function loadForecast() {
-    if (!location) return;
+  // --------------------------------------------------
+  // Generate forecast
+  // --------------------------------------------------
+
+  async function handleGenerateForecast() {
+    if (!selectedLocation) return;
 
     setLoading(true);
     setError("");
-    setData(null);
 
     try {
-      const response = await fetch(
-        `${API_URL}/forecast/${location}`
-      );
+      const [forecastData, weightData, performanceData] =
+        await Promise.all([
+          getForecast(selectedLocation),
+          getForecastWeights(selectedLocation),
+          getModelPerformance(),
+        ]);
 
-      if (!response.ok) {
-        throw new Error(`API returned ${response.status}`);
-      }
-
-      const result: ForecastData = await response.json();
-
-      setData(result);
+      setForecast(forecastData);
+      setWeights(weightData);
+      setPerformance(performanceData);
     } catch (err) {
       console.error(err);
+
       setError(
-        "Could not connect to the forecasting backend."
+        "Failed to generate forecast. Check that FastAPI is running and the selected location exists."
       );
     } finally {
       setLoading(false);
     }
   }
 
+  // --------------------------------------------------
+  // Latest forecast point
+  // --------------------------------------------------
+
+  const latest =
+    forecast?.final_blend?.length > 0
+      ? forecast.final_blend[0]
+      : null;
+
+  const latestGFS =
+    forecast?.raw_gfs?.length > 0
+      ? forecast.raw_gfs[0]
+      : null;
+
+  const latestECMWF =
+    forecast?.raw_ecmwf?.length > 0
+      ? forecast.raw_ecmwf[0]
+      : null;
+
+  const latestCorrectedGFS =
+    forecast?.corrected_gfs?.length > 0
+      ? forecast.corrected_gfs[0]
+      : null;
+
+  const latestCorrectedECMWF =
+    forecast?.corrected_ecmwf?.length > 0
+      ? forecast.corrected_ecmwf[0]
+      : null;
+
   return (
-    <main style={styles.page}>
-      {/* HEADER */}
-      <header style={styles.header}>
-        <div>
-          <div style={styles.badge}>
-            AI + NWP • DISASTER FORECASTING
+    <main
+      style={{
+        minHeight: "100vh",
+        background: "#07111f",
+        color: "#e8f0f8",
+        padding: "40px",
+      }}
+    >
+      <div
+        style={{
+          maxWidth: "1150px",
+          margin: "0 auto",
+        }}
+      >
+        {/* ================================================= */}
+        {/* HEADER */}
+        {/* ================================================= */}
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "flex-start",
+            marginBottom: "45px",
+          }}
+        >
+          <div>
+            <div
+              style={{
+                display: "inline-block",
+                padding: "7px 14px",
+                borderRadius: "20px",
+                background: "#10283e",
+                color: "#42b7f5",
+                fontSize: "13px",
+                fontWeight: 700,
+                letterSpacing: "0.5px",
+                marginBottom: "16px",
+              }}
+            >
+              AI + NWP • DISASTER FORECASTING
+            </div>
+
+            <h1
+              style={{
+                fontSize: "48px",
+                lineHeight: "1.05",
+                margin: 0,
+                maxWidth: "700px",
+              }}
+            >
+              Hybrid AI–NWP
+              <br />
+              Forecast System
+            </h1>
+
+            <p
+              style={{
+                color: "#8da6bd",
+                fontSize: "17px",
+                maxWidth: "720px",
+                marginTop: "20px",
+              }}
+            >
+              Multi-model weather forecasting using GFS + ECMWF,
+              XGBoost bias correction and hybrid blending.
+            </p>
           </div>
 
-          <h1 style={styles.title}>
-            Hybrid AI–NWP
-            <br />
-            Forecast System
-          </h1>
-
-          <p style={styles.subtitle}>
-            Multi-model weather forecasting using GFS + ECMWF,
-            XGBoost bias correction and hybrid blending.
-          </p>
-        </div>
-
-        <div style={styles.status}>
-          <span style={styles.statusDot} />
-          SYSTEM ONLINE
-        </div>
-      </header>
-
-      {/* LOCATION CONTROL */}
-      <section style={styles.controlCard}>
-        <div>
-          <label style={styles.label}>
-            FORECAST LOCATION
-          </label>
-
-          <select
-            value={location}
-            onChange={(e) => {
-              setLocation(e.target.value);
-              setData(null);
-              setError("");
+          <div
+            style={{
+              border: "1px solid #29445c",
+              borderRadius: "10px",
+              padding: "10px 18px",
+              color: "#6ee7a0",
+              fontWeight: 700,
+              fontSize: "14px",
             }}
-            disabled={loadingLocations}
-            style={styles.select}
           >
-            {loadingLocations ? (
-              <option>Loading locations...</option>
-            ) : locations.length === 0 ? (
-              <option>No locations available</option>
-            ) : (
-              locations.map((city) => (
-                <option key={city.id} value={city.id}>
-                  {city.name}
-                </option>
-              ))
-            )}
-          </select>
+            ● SYSTEM ONLINE
+          </div>
         </div>
 
-        <button
-          onClick={loadForecast}
-          disabled={loading || !location}
-          style={styles.button}
+        {/* ================================================= */}
+        {/* LOCATION SELECTOR */}
+        {/* ================================================= */}
+
+        <section
+          style={{
+            background: "#0d1c2b",
+            border: "1px solid #28445d",
+            borderRadius: "14px",
+            padding: "22px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "end",
+            marginBottom: "30px",
+          }}
         >
-          {loading ? "Generating..." : "Generate Forecast"}
-        </button>
-      </section>
+          <div>
+            <label
+              style={{
+                display: "block",
+                color: "#8da6bd",
+                fontSize: "13px",
+                fontWeight: 700,
+                marginBottom: "10px",
+              }}
+            >
+              FORECAST LOCATION
+            </label>
 
-      {/* ERROR */}
-      {error && (
-        <div style={styles.error}>
-          ⚠ {error}
-        </div>
-      )}
+            <select
+              value={selectedLocation}
+              onChange={(e) =>
+                setSelectedLocation(e.target.value)
+              }
+              style={{
+                width: "300px",
+                padding: "13px",
+                borderRadius: "8px",
+                border: "1px solid #31516b",
+                background: "#07111f",
+                color: "white",
+                fontSize: "15px",
+              }}
+            >
+              {locations.map((location) => (
+                <option
+                  key={location.id}
+                  value={location.id}
+                >
+                  {location.name}
+                </option>
+              ))}
+            </select>
+          </div>
 
-      {/* FORECAST */}
-      {data && (
-        <>
-          {/* LOCATION */}
-          <section style={styles.locationCard}>
-            <div>
-              <p style={styles.smallText}>
-                FORECAST LOCATION
-              </p>
-
-              <h2 style={styles.locationName}>
-                {data.location.name}
-              </h2>
-
-              <p style={styles.coordinates}>
-                {data.location.lat}° N
-                &nbsp; • &nbsp;
-                {data.location.lon}° E
-              </p>
-            </div>
-
-            <div style={styles.region}>
-              {data.location.region}
-            </div>
-          </section>
-
-          {/* METRICS */}
-          <section style={styles.grid}>
-            <Metric
-              title="GFS"
-              value={getTemperature(data.raw_gfs)}
-            />
-
-            <Metric
-              title="ECMWF"
-              value={getTemperature(data.raw_ecmwf)}
-            />
-
-            <Metric
-              title="GFS + ML"
-              value={getTemperature(data.corrected_gfs)}
-            />
-
-            <Metric
-              title="ECMWF + ML"
-              value={getTemperature(data.corrected_ecmwf)}
-            />
-
-            <Metric
-              title="HYBRID FORECAST"
-              value={getTemperature(data.final_blend)}
-              highlight
-            />
-          </section>
-
-          {/* PIPELINE */}
-          <section style={styles.panel}>
-            <h2 style={styles.panelTitle}>
-              Forecast Pipeline
-            </h2>
-
-            <div style={styles.pipeline}>
-              <PipelineStep text="GFS" />
-              <Arrow />
-              <PipelineStep text="XGBoost Bias Correction" />
-              <Arrow />
-              <PipelineStep text="ECMWF" />
-              <Arrow />
-              <PipelineStep text="XGBoost Bias Correction" />
-              <Arrow />
-              <PipelineStep text="Hybrid Blending" />
-            </div>
-          </section>
-
-          {/* FORECAST DETAILS */}
-          <section style={styles.panel}>
-            <h2 style={styles.panelTitle}>
-              Forecast Details
-            </h2>
-
-            <div style={styles.detailGrid}>
-              <Detail
-                label="Temperature"
-                value={`${getTemperature(data.final_blend)} °C`}
-              />
-
-              <Detail
-                label="Precipitation"
-                value={`${getValue(data.final_blend, "precipitation")} mm`}
-              />
-
-              <Detail
-                label="Humidity"
-                value={`${getValue(data.final_blend, "humidity")} %`}
-              />
-
-              <Detail
-                label="Pressure"
-                value={`${getValue(data.final_blend, "pressure")} hPa`}
-              />
-
-              <Detail
-                label="Wind Speed"
-                value={`${getValue(data.final_blend, "wind_speed")} m/s`}
-              />
-
-              <Detail
-                label="Forecast Time"
-                value={formatTime(data.final_blend)}
-              />
-            </div>
-          </section>
-
-          {/* DATA */}
-          <section style={styles.panel}>
-            <h2 style={styles.panelTitle}>
-              Forecast Data
-            </h2>
-
-            <pre style={styles.json}>
-              {JSON.stringify(data, null, 2)}
-            </pre>
-          </section>
-        </>
-      )}
-
-      {!data && !loading && !error && (
-        <section style={styles.empty}>
-          <div style={styles.emptyIcon}>◈</div>
-          <h2>Ready for Forecast</h2>
-          <p>
-            Select a location and generate a forecast using
-            the hybrid AI–NWP pipeline.
-          </p>
+          <button
+            onClick={handleGenerateForecast}
+            disabled={loading || !selectedLocation}
+            style={{
+              padding: "13px 24px",
+              borderRadius: "8px",
+              border: "none",
+              background: "#2fa4dc",
+              color: "white",
+              fontWeight: 700,
+              cursor: loading ? "wait" : "pointer",
+            }}
+          >
+            {loading ? "Generating..." : "Generate Forecast"}
+          </button>
         </section>
-      )}
 
-      <footer style={styles.footer}>
-        Hybrid AI–NWP Multi-Model Forecast Blending System
-        <br />
-        GFS • ECMWF • XGBoost • Hybrid Ensemble
-      </footer>
+        {/* ================================================= */}
+        {/* ERROR */}
+        {/* ================================================= */}
+
+        {error && (
+          <div
+            style={{
+              background: "#35161b",
+              border: "1px solid #74313b",
+              color: "#ff9da8",
+              padding: "16px",
+              borderRadius: "10px",
+              marginBottom: "25px",
+            }}
+          >
+            {error}
+          </div>
+        )}
+
+        {/* ================================================= */}
+        {/* FORECAST RESULTS */}
+        {/* ================================================= */}
+
+        {forecast && latest ? (
+          <>
+            {/* LOCATION */}
+
+            <section
+              style={{
+                background: "#0d1c2b",
+                border: "1px solid #28445d",
+                borderRadius: "14px",
+                padding: "24px",
+                marginBottom: "22px",
+              }}
+            >
+              <div
+                style={{
+                  color: "#8da6bd",
+                  fontSize: "13px",
+                  fontWeight: 700,
+                }}
+              >
+                FORECAST LOCATION
+              </div>
+
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginTop: "10px",
+                }}
+              >
+                <div>
+                  <h2
+                    style={{
+                      fontSize: "30px",
+                      margin: 0,
+                    }}
+                  >
+                    {forecast.location.name}
+                  </h2>
+
+                  <p style={{ color: "#8da6bd" }}>
+                    {forecast.location.lat.toFixed(4)}° N
+                    {" • "}
+                    {forecast.location.lon.toFixed(4)}° E
+                  </p>
+                </div>
+
+                <div
+                  style={{
+                    background: "#102f48",
+                    color: "#58c5ff",
+                    padding: "10px 18px",
+                    borderRadius: "20px",
+                  }}
+                >
+                  {forecast.location.region}
+                </div>
+              </div>
+            </section>
+
+            {/* MODEL CARDS */}
+
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  "repeat(5, 1fr)",
+                gap: "14px",
+                marginBottom: "22px",
+              }}
+            >
+              <ModelCard
+                title="GFS"
+                value={latestGFS?.temperature}
+              />
+
+              <ModelCard
+                title="ECMWF"
+                value={latestECMWF?.temperature}
+              />
+
+              <ModelCard
+                title="GFS + ML"
+                value={latestCorrectedGFS?.temperature}
+              />
+
+              <ModelCard
+                title="ECMWF + ML"
+                value={latestCorrectedECMWF?.temperature}
+              />
+
+              <ModelCard
+                title="HYBRID FORECAST"
+                value={latest.temperature}
+                highlight
+              />
+            </div>
+
+            {/* PIPELINE */}
+
+            <section
+              style={{
+                background: "#0d1c2b",
+                border: "1px solid #28445d",
+                borderRadius: "14px",
+                padding: "24px",
+                marginBottom: "22px",
+              }}
+            >
+              <h2>Forecast Pipeline</h2>
+
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: "12px",
+                  flexWrap: "wrap",
+                  marginTop: "20px",
+                }}
+              >
+                {[
+                  "GFS",
+                  "XGBoost Correction",
+                  "ECMWF",
+                  "XGBoost Correction",
+                  "Hybrid Blending",
+                ].map((step, index) => (
+                  <div
+                    key={step + index}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "12px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        background: "#142a3d",
+                        border: "1px solid #31516b",
+                        padding: "11px 15px",
+                        borderRadius: "7px",
+                        fontSize: "13px",
+                      }}
+                    >
+                      {step}
+                    </div>
+
+                    {index < 4 && (
+                      <span
+                        style={{
+                          color: "#42b7f5",
+                          fontSize: "20px",
+                        }}
+                      >
+                        →
+                      </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+
+            {/* DETAILS */}
+
+            <section
+              style={{
+                background: "#0d1c2b",
+                border: "1px solid #28445d",
+                borderRadius: "14px",
+                padding: "24px",
+                marginBottom: "22px",
+              }}
+            >
+              <h2>Forecast Details</h2>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns:
+                    "repeat(5, 1fr)",
+                  gap: "12px",
+                  marginTop: "18px",
+                }}
+              >
+                <DetailCard
+                  title="Temperature"
+                  value={`${latest.temperature?.toFixed(
+                    2
+                  )} °C`}
+                />
+
+                <DetailCard
+                  title="Precipitation"
+                  value={`${latest.precipitation?.toFixed(
+                    2
+                  )} mm`}
+                />
+
+                <DetailCard
+                  title="Humidity"
+                  value={`${latest.humidity?.toFixed(
+                    2
+                  )} %`}
+                />
+
+                <DetailCard
+                  title="Pressure"
+                  value={`${latest.pressure?.toFixed(
+                    2
+                  )} hPa`}
+                />
+
+                <DetailCard
+                  title="Wind Speed"
+                  value={`${latest.wind_speed?.toFixed(
+                    2
+                  )} m/s`}
+                />
+              </div>
+
+              <div
+                style={{
+                  marginTop: "14px",
+                  color: "#8da6bd",
+                }}
+              >
+                Forecast time:{" "}
+                <strong style={{ color: "white" }}>
+                  {new Date(
+                    latest.valid_time
+                  ).toLocaleString()}
+                </strong>
+              </div>
+            </section>
+
+            {/* WEIGHTS */}
+
+            {weights?.current && (
+              <section
+                style={{
+                  background: "#0d1c2b",
+                  border: "1px solid #28445d",
+                  borderRadius: "14px",
+                  padding: "24px",
+                  marginBottom: "22px",
+                }}
+              >
+                <h2>Model Trust Weights</h2>
+
+                <div
+                  style={{
+                    display: "grid",
+                    gridTemplateColumns:
+                      "1fr 1fr",
+                    gap: "15px",
+                    marginTop: "18px",
+                  }}
+                >
+                  <DetailCard
+                    title="GFS Trust"
+                    value={`${weights.current.gfs_trust_pct}%`}
+                  />
+
+                  <DetailCard
+                    title="ECMWF Trust"
+                    value={`${weights.current.ecmwf_trust_pct}%`}
+                  />
+                </div>
+              </section>
+            )}
+
+            {/* PERFORMANCE */}
+
+            {performance?.by_model && (
+              <section
+                style={{
+                  background: "#0d1c2b",
+                  border: "1px solid #28445d",
+                  borderRadius: "14px",
+                  padding: "24px",
+                  marginBottom: "22px",
+                }}
+              >
+                <h2>Model Performance</h2>
+
+                <div style={{ overflowX: "auto" }}>
+                  <table
+                    style={{
+                      width: "100%",
+                      marginTop: "18px",
+                      borderCollapse: "collapse",
+                    }}
+                  >
+                    <thead>
+                      <tr>
+                        <th style={th}>Model</th>
+                        <th style={th}>MAE</th>
+                        <th style={th}>RMSE</th>
+                        <th style={th}>Bias</th>
+                      </tr>
+                    </thead>
+
+                    <tbody>
+                      {performance.by_model.map(
+                        (model: any) => (
+                          <tr key={model.model_name}>
+                            <td style={td}>
+                              {model.model_name}
+                            </td>
+
+                            <td style={td}>
+                              {model.mae}
+                            </td>
+
+                            <td style={td}>
+                              {model.rmse}
+                            </td>
+
+                            <td style={td}>
+                              {model.bias}
+                            </td>
+                          </tr>
+                        )
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
+
+            {/* RAW API DATA */}
+
+            <details
+              style={{
+                background: "#0d1c2b",
+                border: "1px solid #28445d",
+                borderRadius: "14px",
+                padding: "20px",
+              }}
+            >
+              <summary
+                style={{
+                  cursor: "pointer",
+                  fontWeight: 700,
+                }}
+              >
+                Forecast Data — API Response
+              </summary>
+
+              <pre
+                style={{
+                  marginTop: "15px",
+                  background: "#030a12",
+                  padding: "20px",
+                  borderRadius: "8px",
+                  overflow: "auto",
+                  maxHeight: "500px",
+                  fontSize: "12px",
+                }}
+              >
+                {JSON.stringify(
+                  forecast,
+                  null,
+                  2
+                )}
+              </pre>
+            </details>
+          </>
+        ) : (
+          /* ================================================= */
+          /* EMPTY STATE */
+          /* ================================================= */
+
+          <section
+            style={{
+              minHeight: "250px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "center",
+              alignItems: "center",
+              background: "#0d1c2b",
+              border: "1px solid #28445d",
+              borderRadius: "14px",
+            }}
+          >
+            <div
+              style={{
+                fontSize: "42px",
+                color: "#2fa4dc",
+              }}
+            >
+              ◇
+            </div>
+
+            <h2>Ready for Forecast</h2>
+
+            <p style={{ color: "#8da6bd" }}>
+              Select a location and generate a forecast
+              using the hybrid AI–NWP pipeline.
+            </p>
+          </section>
+        )}
+
+        {/* ================================================= */}
+        {/* FOOTER */}
+        {/* ================================================= */}
+
+        <footer
+          style={{
+            marginTop: "45px",
+            paddingTop: "25px",
+            borderTop: "1px solid #233b50",
+            textAlign: "center",
+            color: "#617c95",
+            fontSize: "13px",
+          }}
+        >
+          Hybrid AI–NWP Multi-Model Forecast Blending System
+          <br />
+          GFS • ECMWF • XGBoost • Hybrid Ensemble
+        </footer>
+      </div>
     </main>
   );
 }
 
-/* =========================
-   HELPERS
-========================= */
 
-function getTemperature(rows: WeatherPoint[]) {
-  if (!rows || rows.length === 0) return "--";
+// =========================================================
+// SMALL COMPONENTS
+// =========================================================
 
-  const value = rows[0]?.temperature;
-
-  return value == null
-    ? "--"
-    : value.toFixed(2);
-}
-
-function getValue(
-  rows: WeatherPoint[],
-  field: keyof WeatherPoint
-) {
-  if (!rows || rows.length === 0) return "--";
-
-  const value = rows[0]?.[field];
-
-  if (typeof value !== "number") return "--";
-
-  return value.toFixed(2);
-}
-
-function formatTime(rows: WeatherPoint[]) {
-  if (!rows || rows.length === 0) return "--";
-
-  return new Date(rows[0].valid_time).toLocaleString(
-    "en-IN",
-    {
-      dateStyle: "medium",
-      timeStyle: "short",
-    }
-  );
-}
-
-/* =========================
-   COMPONENTS
-========================= */
-
-function Metric({
+function ModelCard({
   title,
   value,
   highlight = false,
 }: {
   title: string;
-  value: string;
+  value?: number;
   highlight?: boolean;
 }) {
   return (
     <div
       style={{
-        ...styles.metric,
-        ...(highlight ? styles.highlightMetric : {}),
+        background: "#0d1c2b",
+        border: highlight
+          ? "1px solid #2fa4dc"
+          : "1px solid #28445d",
+        borderRadius: "14px",
+        padding: "20px",
       }}
     >
-      <p style={styles.metricTitle}>{title}</p>
-
-      <div style={styles.metricValue}>
-        {value}
+      <div
+        style={{
+          color: "#8da6bd",
+          fontSize: "13px",
+          fontWeight: 700,
+        }}
+      >
+        {title}
       </div>
 
-      <span style={styles.unit}>°C</span>
+      <div
+        style={{
+          fontSize: "30px",
+          fontWeight: 700,
+          marginTop: "10px",
+        }}
+      >
+        {value !== undefined
+          ? value.toFixed(2)
+          : "--"}
+      </div>
+
+      <div style={{ color: "#718ba1" }}>
+        °C
+      </div>
     </div>
   );
 }
 
-function Detail({
-  label,
+
+function DetailCard({
+  title,
   value,
 }: {
-  label: string;
+  title: string;
   value: string;
 }) {
   return (
-    <div style={styles.detail}>
-      <span style={styles.detailLabel}>
-        {label}
-      </span>
+    <div
+      style={{
+        background: "#091725",
+        borderRadius: "8px",
+        padding: "16px",
+      }}
+    >
+      <div
+        style={{
+          color: "#718ba1",
+          fontSize: "13px",
+        }}
+      >
+        {title}
+      </div>
 
-      <strong style={styles.detailValue}>
+      <div
+        style={{
+          marginTop: "7px",
+          fontWeight: 700,
+          fontSize: "17px",
+        }}
+      >
         {value}
-      </strong>
+      </div>
     </div>
   );
 }
 
-function PipelineStep({ text }: { text: string }) {
-  return (
-    <div style={styles.pipelineStep}>
-      {text}
-    </div>
-  );
-}
 
-function Arrow() {
-  return <div style={styles.arrow}>→</div>;
-}
+const th: React.CSSProperties = {
+  textAlign: "left",
+  padding: "12px",
+  borderBottom: "1px solid #28445d",
+  color: "#8da6bd",
+};
 
-/* =========================
-   STYLES
-========================= */
-
-const styles: any = {
-  page: {
-    minHeight: "100vh",
-    background:
-      "linear-gradient(135deg,#07111f 0%,#0b1728 50%,#101c30 100%)",
-    color: "#e5edf7",
-    padding: "40px",
-    fontFamily: "Arial, Helvetica, sans-serif",
-  },
-
-  header: {
-    maxWidth: "1200px",
-    margin: "0 auto",
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: "30px",
-  },
-
-  badge: {
-    display: "inline-block",
-    padding: "7px 12px",
-    borderRadius: "20px",
-    background: "#12263d",
-    color: "#60a5fa",
-    fontSize: "12px",
-    fontWeight: "700",
-    letterSpacing: "1px",
-  },
-
-  title: {
-    fontSize: "48px",
-    lineHeight: "1.05",
-    margin: "18px 0",
-  },
-
-  subtitle: {
-    maxWidth: "650px",
-    color: "#94a3b8",
-    fontSize: "17px",
-    lineHeight: "1.6",
-  },
-
-  status: {
-    padding: "10px 15px",
-    borderRadius: "20px",
-    background: "#10291f",
-    color: "#4ade80",
-    fontSize: "12px",
-    fontWeight: "700",
-  },
-
-  statusDot: {
-    display: "inline-block",
-    width: "8px",
-    height: "8px",
-    borderRadius: "50%",
-    background: "#4ade80",
-    marginRight: "8px",
-  },
-
-  controlCard: {
-    maxWidth: "1200px",
-    margin: "60px auto 30px",
-    padding: "26px",
-    borderRadius: "18px",
-    background: "#111f31",
-    border: "1px solid #243b55",
-    display: "flex",
-    alignItems: "end",
-    gap: "20px",
-  },
-
-  label: {
-    display: "block",
-    color: "#7891b2",
-    fontSize: "12px",
-    fontWeight: "700",
-    marginBottom: "10px",
-    letterSpacing: "1px",
-  },
-
-  select: {
-    width: "240px",
-    padding: "13px",
-    borderRadius: "8px",
-    background: "#0b1625",
-    color: "#e5edf7",
-    border: "1px solid #30445e",
-    fontSize: "15px",
-  },
-
-  button: {
-    padding: "14px 24px",
-    borderRadius: "8px",
-    border: "none",
-    background: "#3267e8",
-    color: "white",
-    fontWeight: "700",
-    cursor: "pointer",
-  },
-
-  error: {
-    maxWidth: "1200px",
-    margin: "20px auto",
-    padding: "16px",
-    borderRadius: "10px",
-    background: "#45191b",
-    border: "1px solid #8f3033",
-    color: "#ff8d8d",
-  },
-
-  locationCard: {
-    maxWidth: "1200px",
-    margin: "30px auto",
-    padding: "25px",
-    borderRadius: "18px",
-    background: "#111f31",
-    border: "1px solid #243b55",
-    display: "flex",
-    justifyContent: "space-between",
-  },
-
-  smallText: {
-    color: "#7891b2",
-    fontSize: "12px",
-    letterSpacing: "1px",
-  },
-
-  locationName: {
-    fontSize: "32px",
-    margin: "8px 0",
-  },
-
-  coordinates: {
-    color: "#94a3b8",
-  },
-
-  region: {
-    color: "#60a5fa",
-    fontWeight: "700",
-  },
-
-  grid: {
-    maxWidth: "1200px",
-    margin: "30px auto",
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit,minmax(180px,1fr))",
-    gap: "16px",
-  },
-
-  metric: {
-    padding: "22px",
-    borderRadius: "14px",
-    background: "#111f31",
-    border: "1px solid #243b55",
-  },
-
-  highlightMetric: {
-    border: "1px solid #3267e8",
-    background: "#132b4c",
-  },
-
-  metricTitle: {
-    color: "#7891b2",
-    fontSize: "13px",
-    fontWeight: "700",
-  },
-
-  metricValue: {
-    fontSize: "30px",
-    fontWeight: "700",
-    marginTop: "15px",
-  },
-
-  unit: {
-    color: "#94a3b8",
-  },
-
-  panel: {
-    maxWidth: "1200px",
-    margin: "30px auto",
-    padding: "25px",
-    borderRadius: "18px",
-    background: "#111f31",
-    border: "1px solid #243b55",
-  },
-
-  panelTitle: {
-    marginTop: 0,
-  },
-
-  pipeline: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    flexWrap: "wrap",
-    gap: "12px",
-  },
-
-  pipelineStep: {
-    padding: "12px 18px",
-    borderRadius: "8px",
-    background: "#172b43",
-    border: "1px solid #304b6b",
-    fontSize: "13px",
-  },
-
-  arrow: {
-    color: "#60a5fa",
-    fontSize: "22px",
-  },
-
-  detailGrid: {
-    display: "grid",
-    gridTemplateColumns:
-      "repeat(auto-fit,minmax(180px,1fr))",
-    gap: "14px",
-  },
-
-  detail: {
-    padding: "18px",
-    background: "#0b1625",
-    borderRadius: "10px",
-    border: "1px solid #243b55",
-  },
-
-  detailLabel: {
-    display: "block",
-    color: "#7891b2",
-    fontSize: "12px",
-    marginBottom: "8px",
-  },
-
-  detailValue: {
-    fontSize: "18px",
-  },
-
-  json: {
-    maxHeight: "400px",
-    overflow: "auto",
-    padding: "20px",
-    borderRadius: "10px",
-    background: "#07111f",
-    color: "#9cc4ff",
-    fontSize: "12px",
-  },
-
-  empty: {
-    maxWidth: "1200px",
-    margin: "30px auto",
-    padding: "70px",
-    textAlign: "center",
-    borderRadius: "18px",
-    background: "#111f31",
-    border: "1px solid #243b55",
-  },
-
-  emptyIcon: {
-    fontSize: "40px",
-    color: "#3267e8",
-  },
-
-  footer: {
-    maxWidth: "1200px",
-    margin: "60px auto 0",
-    paddingTop: "25px",
-    borderTop: "1px solid #243b55",
-    textAlign: "center",
-    color: "#607895",
-    fontSize: "13px",
-    lineHeight: "1.8",
-  },
+const td: React.CSSProperties = {
+  padding: "12px",
+  borderBottom: "1px solid #182d40",
 };
