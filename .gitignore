@@ -47,4 +47,4 @@ dist/
 build/
 *.egg-info/
 # Next.js
-frontend/.next/
+frontend/.next/frontend/node_modules/
